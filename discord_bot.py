@@ -75,7 +75,7 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
-@bot.command(name="ajuda", aliases=["help", "h"])
+@bot.command(name="ajuda", aliases=["h"])
 async def ajuda(ctx):
     """Mostra a lista de comandos disponíveis"""
     embed = discord.Embed(
