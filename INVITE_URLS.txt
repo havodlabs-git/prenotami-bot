@@ -1,0 +1,86 @@
+╔══════════════════════════════════════════════════════════════╗
+║           URLs DE CONVITE - BOT PRENOTAMI                    ║
+╚══════════════════════════════════════════════════════════════╝
+
+Application ID: 1441508569110417590
+
+═══════════════════════════════════════════════════════════════
+
+📌 URL PARA ADICIONAR A SERVIDOR:
+
+https://discord.com/api/oauth2/authorize?client_id=1441508569110417590&permissions=274877975552&scope=bot
+
+═══════════════════════════════════════════════════════════════
+
+💬 URL PARA ADICIONAR A DM (USER INSTALL):
+
+https://discord.com/api/oauth2/authorize?client_id=1441508569110417590&permissions=274877975552&scope=bot%20applications.commands&integration_type=1
+
+═══════════════════════════════════════════════════════════════
+
+🔧 COMO USAR:
+
+1. Copie uma das URLs acima
+2. Cole no navegador
+3. Faça login no Discord (se necessário)
+4. Escolha onde adicionar:
+   
+   OPÇÃO A - Servidor:
+   - Selecione um servidor que você administra
+   - Clique em "Autorizar"
+   
+   OPÇÃO B - DM (Mensagem Direta):
+   - Selecione "Adicionar ao DM" ou "Usar como aplicativo"
+   - Clique em "Autorizar"
+
+5. Após adicionar, envie uma mensagem:
+   !ajuda
+
+═══════════════════════════════════════════════════════════════
+
+⚠️ IMPORTANTE:
+
+1. Certifique-se de ativar "MESSAGE CONTENT INTENT" no
+   Discord Developer Portal → Bot → Privileged Gateway Intents
+
+2. Para usar em DM, ative "User Install" no Developer Portal:
+   Installation → Default Install Settings → User Install
+
+3. Copie o TOKEN do bot e adicione ao arquivo .env:
+   DISCORD_BOT_TOKEN=seu_token_aqui
+
+4. Inicie o bot localmente:
+   python3 discord_bot.py
+
+═══════════════════════════════════════════════════════════════
+
+📝 COMANDOS DISPONÍVEIS:
+
+!ajuda          # Ver todos os comandos
+!info           # Informações sobre o bot
+!status         # Ver seus agendamentos
+!verificar      # Verificar disponibilidade agora
+!iniciar        # Iniciar monitoramento automático
+!parar          # Parar monitoramento
+!agendar        # Tentar agendar automaticamente
+
+═══════════════════════════════════════════════════════════════
+
+✅ CHECKLIST:
+
+[ ] Ativar MESSAGE CONTENT INTENT no Developer Portal
+[ ] Ativar User Install (para DM)
+[ ] Copiar TOKEN e adicionar ao .env
+[ ] Adicionar bot usando uma das URLs acima
+[ ] Iniciar bot: python3 discord_bot.py
+[ ] Testar: enviar !ajuda no Discord
+
+═══════════════════════════════════════════════════════════════
+
+🎯 RECOMENDAÇÃO:
+
+Para uso pessoal em DM, use a segunda URL (User Install).
+Isso permite controlar o bot diretamente via mensagem privada,
+sem precisar criar um servidor.
+
+═══════════════════════════════════════════════════════════════

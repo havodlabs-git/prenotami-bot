@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Arquivos locais
+.env
+*.pkl
+*.json
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Documentação
+*.md
+*.txt
+!requirements.txt
+
+# Scripts de teste
+test_bot.py
+generate_invite_url.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
