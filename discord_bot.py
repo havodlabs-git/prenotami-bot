@@ -1,74 +1,61 @@
 #!/usr/bin/env python3
 """
-Bot do Discord para controlar o PrenotaMI Bot
-Permite verificar status, disponibilidade e receber notificações via Discord
+Bot Discord PrenotaMI - Versão Notificador
+Avisa diariamente às 20:00 (horário da Itália) para verificar vagas
 """
-
-import os
-import asyncio
-import json
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
 import discord
 from discord.ext import commands, tasks
-from dotenv import load_dotenv
-
-from prenotami_bot import PrenotaMIBot
-
-
-# Carregar variáveis de ambiente
-load_dotenv()
+import os
+from datetime import datetime, time
+import pytz
+import asyncio
 
 # Configurações
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-PRENOTAMI_EMAIL = os.getenv("PRENOTAMI_EMAIL")
-PRENOTAMI_PASSWORD = os.getenv("PRENOTAMI_PASSWORD")
-CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "30"))
-AUTHORIZED_USER_ID = os.getenv("DISCORD_USER_ID")  # Opcional: ID do usuário autorizado
+DISCORD_USER_ID = os.getenv("DISCORD_USER_ID")  # Opcional
 
-# Intents necessários para o bot
+# Timezone da Itália
+ITALY_TZ = pytz.timezone('Europe/Rome')
+
+# Criar bot com intents necessários
 intents = discord.Intents.default()
 intents.message_content = True
-intents.dm_messages = True
+intents.guilds = True
+intents.members = True
 
-# Criar bot com prefixo de comando
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-# Estado global
-monitoring_active = False
-monitoring_task = None
-prenotami_bot = None
-authorized_user = None
-
-
-def is_authorized(ctx):
-    """Verifica se o usuário está autorizado a usar o bot"""
-    if AUTHORIZED_USER_ID:
-        return str(ctx.author.id) == AUTHORIZED_USER_ID
-    return True  # Se não configurado, permite todos
-
+# Variável global para controlar notificações
+notifications_enabled = {}
 
 @bot.event
 async def on_ready():
     """Evento quando o bot está pronto"""
-    print("="*60)
+    print("=" * 60)
     print("BOT DISCORD PRENOTAMI INICIADO")
-    print("="*60)
+    print("=" * 60)
     print(f"Bot: {bot.user.name} (ID: {bot.user.id})")
     print(f"Servidores: {len(bot.guilds)}")
-    print(f"Intervalo de verificação: {CHECK_INTERVAL_MINUTES} minutos")
-    print("="*60)
-    print("\nBot pronto para receber comandos!")
-    print("Use !ajuda para ver os comandos disponíveis\n")
-
+    print("=" * 60)
+    print()
+    print("Bot pronto para receber comandos!")
+    print("Use !ajuda para ver os comandos disponíveis")
+    print()
+    
+    # Iniciar task de verificação de horário
+    if not check_time_task.is_running():
+        check_time_task.start()
 
 @bot.event
 async def on_message(message):
     """Evento quando uma mensagem é recebida"""
     # Ignorar mensagens do próprio bot
     if message.author == bot.user:
+        return
+    
+    # Se DISCORD_USER_ID está configurado, aceitar apenas desse usuário
+    if DISCORD_USER_ID and str(message.author.id) != DISCORD_USER_ID:
         return
     
     # Processar comandos
@@ -80,53 +67,36 @@ async def ajuda(ctx):
     """Mostra a lista de comandos disponíveis"""
     embed = discord.Embed(
         title="🤖 Bot PrenotaMI - Comandos",
-        description="Bot para monitorar e agendar renovação de passaporte",
+        description="Notificador de horário para agendamento de passaporte",
         color=discord.Color.blue()
     )
     
     embed.add_field(
-        name="📊 !status",
-        value="Ver seus agendamentos ativos",
+        name="📋 Comandos Básicos",
+        value=(
+            "`!ajuda` ou `!h` - Mostra esta mensagem\n"
+            "`!info` - Informações sobre o bot\n"
+        ),
         inline=False
     )
     
     embed.add_field(
-        name="🔍 !verificar",
-        value="Verificar disponibilidade agora",
+        name="🔔 Comandos de Notificação",
+        value=(
+            "`!ativar` - Ativar notificações diárias às 20:00\n"
+            "`!desativar` - Desativar notificações\n"
+            "`!status` - Ver status das notificações\n"
+        ),
         inline=False
     )
     
     embed.add_field(
-        name="▶️ !iniciar",
-        value="Iniciar monitoramento automático",
+        name="🔗 Link Útil",
+        value="[Acessar PrenotaMI](https://prenotami.esteri.it)",
         inline=False
     )
     
-    embed.add_field(
-        name="⏸️ !parar",
-        value="Parar monitoramento automático",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="📅 !agendar",
-        value="Tentar agendar automaticamente",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="ℹ️ !info",
-        value="Informações sobre o bot",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="❓ !ajuda",
-        value="Mostrar esta mensagem",
-        inline=False
-    )
-    
-    embed.set_footer(text="Bot PrenotaMI v1.0")
+    embed.set_footer(text="Bot desenvolvido para facilitar agendamentos consulares 🇮🇹")
     
     await ctx.send(embed=embed)
 
@@ -134,393 +104,215 @@ async def ajuda(ctx):
 @bot.command(name="info")
 async def info(ctx):
     """Mostra informações sobre o bot"""
-    if not is_authorized(ctx):
-        await ctx.send("❌ Você não está autorizado a usar este bot.")
-        return
+    now_italy = datetime.now(ITALY_TZ)
     
     embed = discord.Embed(
         title="ℹ️ Informações do Bot",
-        color=discord.Color.blue()
+        color=discord.Color.green()
+    )
+    
+    embed.add_field(name="🤖 Bot", value=bot.user.name, inline=True)
+    embed.add_field(name="🆔 ID", value=bot.user.id, inline=True)
+    embed.add_field(name="📡 Status", value="🟢 Online", inline=True)
+    
+    embed.add_field(
+        name="🕐 Horário Atual (Itália)",
+        value=now_italy.strftime("%H:%M:%S - %d/%m/%Y"),
+        inline=False
     )
     
     embed.add_field(
-        name="Status",
-        value="🟢 Online" if bot.is_ready() else "🔴 Offline",
-        inline=True
+        name="🔔 Notificações",
+        value="Diariamente às 20:00 (horário da Itália)",
+        inline=False
     )
     
     embed.add_field(
-        name="Monitoramento",
-        value="✅ Ativo" if monitoring_active else "⏸️ Parado",
-        inline=True
+        name="📝 Como Funciona",
+        value=(
+            "1. Use `!ativar` para receber notificações\n"
+            "2. Todo dia às 20:00 você receberá um lembrete\n"
+            "3. Acesse o site e verifique vagas disponíveis\n"
+            "4. Agende manualmente se houver vaga"
+        ),
+        inline=False
+    )
+    
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="ativar")
+async def ativar(ctx):
+    """Ativa notificações diárias"""
+    user_id = ctx.author.id
+    notifications_enabled[user_id] = True
+    
+    embed = discord.Embed(
+        title="✅ Notificações Ativadas!",
+        description=(
+            "Você receberá um lembrete **diariamente às 20:00** (horário da Itália) "
+            "para verificar vagas no PrenotaMI.\n\n"
+            "🔗 Link: https://prenotami.esteri.it"
+        ),
+        color=discord.Color.green()
     )
     
     embed.add_field(
-        name="Intervalo",
-        value=f"{CHECK_INTERVAL_MINUTES} minutos",
-        inline=True
+        name="💡 Dica",
+        value=(
+            "O sistema PrenotaMI libera novas vagas diariamente às 20:00. "
+            "Esteja pronto para agendar assim que receber a notificação!"
+        ),
+        inline=False
     )
     
-    # Verificar último status
-    status_file = Path("booking_status.json")
-    if status_file.exists():
-        with open(status_file, 'r') as f:
-            last_status = json.load(f)
-        
-        if "timestamp" in last_status:
-            timestamp = datetime.fromisoformat(last_status["timestamp"])
-            embed.add_field(
-                name="Última Verificação",
-                value=timestamp.strftime("%d/%m/%Y %H:%M:%S"),
-                inline=False
-            )
-        
-        if "message" in last_status:
-            embed.add_field(
-                name="Último Resultado",
-                value=last_status["message"],
-                inline=False
-            )
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="desativar")
+async def desativar(ctx):
+    """Desativa notificações diárias"""
+    user_id = ctx.author.id
+    notifications_enabled[user_id] = False
     
-    embed.set_footer(text="Bot PrenotaMI v1.0 - Consulado da Itália em Paris")
+    embed = discord.Embed(
+        title="🔕 Notificações Desativadas",
+        description="Você não receberá mais lembretes diários.",
+        color=discord.Color.orange()
+    )
+    
+    embed.add_field(
+        name="ℹ️ Reativar",
+        value="Use `!ativar` para voltar a receber notificações.",
+        inline=False
+    )
     
     await ctx.send(embed=embed)
 
 
 @bot.command(name="status")
 async def status(ctx):
-    """Verifica status dos agendamentos"""
-    if not is_authorized(ctx):
-        await ctx.send("❌ Você não está autorizado a usar este bot.")
-        return
+    """Mostra o status das notificações"""
+    user_id = ctx.author.id
+    enabled = notifications_enabled.get(user_id, False)
     
-    await ctx.send("🔄 Verificando seus agendamentos...")
+    now_italy = datetime.now(ITALY_TZ)
+    next_notification = now_italy.replace(hour=20, minute=0, second=0, microsecond=0)
     
-    try:
-        # Criar bot PrenotaMI
-        # Usar headless mode se configurado
-        headless = os.getenv("HEADLESS_MODE", "true").lower() == "true"
-        bot_instance = PrenotaMIBot(PRENOTAMI_EMAIL, PRENOTAMI_PASSWORD, headless=headless)
-        
-        # Fazer login
-        if not bot_instance.login():
-            await ctx.send("❌ Erro ao fazer login no PrenotaMI. Verifique suas credenciais.")
-            bot_instance.close()
-            return
-        
-        # Buscar agendamentos
-        appointments = bot_instance.get_my_appointments()
-        
-        if not appointments:
-            embed = discord.Embed(
-                title="📋 Status dos Agendamentos",
-                description="⚠️ Você não possui agendamentos ativos",
-                color=discord.Color.orange()
-            )
-        else:
-            embed = discord.Embed(
-                title="📋 Status dos Agendamentos",
-                description=f"✅ Total de agendamentos: {len(appointments)}",
-                color=discord.Color.green()
-            )
-            
-            for i, apt in enumerate(appointments, 1):
-                embed.add_field(
-                    name=f"{i}. {apt['service']}",
-                    value=f"**Código:** {apt['booking_code']}\n"
-                          f"**Data:** {apt['date']}\n"
-                          f"**Status:** {apt['status']}",
-                    inline=False
-                )
-        
-        embed.set_footer(text=f"Verificado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-        
-        await ctx.send(embed=embed)
-        
-        bot_instance.close()
-        
-    except Exception as e:
-        await ctx.send(f"❌ Erro ao verificar status: {str(e)}")
-
-
-@bot.command(name="verificar", aliases=["check"])
-async def verificar(ctx, servico: str = "PASSAPORTO"):
-    """Verifica disponibilidade de agendamentos"""
-    if not is_authorized(ctx):
-        await ctx.send("❌ Você não está autorizado a usar este bot.")
-        return
-    
-    await ctx.send(f"🔍 Verificando disponibilidade para {servico}...")
-    
-    try:
-        # Criar bot PrenotaMI
-        # Usar headless mode se configurado
-        headless = os.getenv("HEADLESS_MODE", "true").lower() == "true"
-        bot_instance = PrenotaMIBot(PRENOTAMI_EMAIL, PRENOTAMI_PASSWORD, headless=headless)
-        
-        # Fazer login
-        if not bot_instance.login():
-            await ctx.send("❌ Erro ao fazer login no PrenotaMI.")
-            bot_instance.close()
-            return
-        
-        # Verificar disponibilidade
-        result = bot_instance.check_availability(servico)
-        
-        if result["available"]:
-            embed = discord.Embed(
-                title="🎉 Vagas Disponíveis!",
-                description=result["message"],
-                color=discord.Color.green()
-            )
-            
-            if result["dates"]:
-                dates_text = "\n".join([f"📅 {date}" for date in result["dates"][:10]])
-                embed.add_field(
-                    name="Primeiras datas disponíveis:",
-                    value=dates_text,
-                    inline=False
-                )
-            
-            embed.add_field(
-                name="💡 Dica",
-                value="Use `!agendar` para tentar agendar automaticamente!",
-                inline=False
-            )
-        else:
-            embed = discord.Embed(
-                title="⚠️ Sem Vagas",
-                description=result["message"],
-                color=discord.Color.orange()
-            )
-            
-            embed.add_field(
-                name="💡 Dica",
-                value="Use `!iniciar` para monitorar automaticamente.\n"
-                      "O sistema libera novas vagas às 20:00 (horário da Itália).",
-                inline=False
-            )
-        
-        embed.set_footer(text=f"Verificado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-        
-        await ctx.send(embed=embed)
-        
-        bot_instance.close()
-        
-    except Exception as e:
-        await ctx.send(f"❌ Erro ao verificar disponibilidade: {str(e)}")
-
-
-@bot.command(name="agendar", aliases=["book"])
-async def agendar(ctx, servico: str = "PASSAPORTO"):
-    """Tenta agendar automaticamente"""
-    if not is_authorized(ctx):
-        await ctx.send("❌ Você não está autorizado a usar este bot.")
-        return
-    
-    await ctx.send(f"📅 Tentando agendar {servico}...")
-    
-    try:
-        # Criar bot PrenotaMI
-        # Usar headless mode se configurado
-        headless = os.getenv("HEADLESS_MODE", "true").lower() == "true"
-        bot_instance = PrenotaMIBot(PRENOTAMI_EMAIL, PRENOTAMI_PASSWORD, headless=headless)
-        
-        # Fazer login
-        if not bot_instance.login():
-            await ctx.send("❌ Erro ao fazer login no PrenotaMI.")
-            bot_instance.close()
-            return
-        
-        # Tentar agendar
-        result = bot_instance.book_appointment(servico, auto_select=True)
-        
-        if result["success"]:
-            embed = discord.Embed(
-                title="✅ Agendamento Realizado!",
-                description="Seu agendamento foi confirmado com sucesso!",
-                color=discord.Color.green()
-            )
-            
-            embed.add_field(
-                name="Código de Agendamento",
-                value=f"`{result.get('booking_code', 'N/A')}`",
-                inline=False
-            )
-            
-            embed.add_field(
-                name="📝 Importante",
-                value="Verifique seu email para confirmação.\n"
-                      "Use `!status` para ver detalhes do agendamento.",
-                inline=False
-            )
-        else:
-            embed = discord.Embed(
-                title="⚠️ Agendamento Não Realizado",
-                description=result["message"],
-                color=discord.Color.orange()
-            )
-        
-        embed.set_footer(text=f"Tentativa em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-        
-        await ctx.send(embed=embed)
-        
-        bot_instance.close()
-        
-    except Exception as e:
-        await ctx.send(f"❌ Erro ao agendar: {str(e)}")
-
-
-@bot.command(name="iniciar", aliases=["start", "monitor"])
-async def iniciar(ctx):
-    """Inicia o monitoramento automático"""
-    global monitoring_active, monitoring_task
-    
-    if not is_authorized(ctx):
-        await ctx.send("❌ Você não está autorizado a usar este bot.")
-        return
-    
-    if monitoring_active:
-        await ctx.send("⚠️ Monitoramento já está ativo!")
-        return
-    
-    monitoring_active = True
+    # Se já passou das 20:00, próxima notificação é amanhã
+    if now_italy.hour >= 20:
+        from datetime import timedelta
+        next_notification += timedelta(days=1)
     
     embed = discord.Embed(
-        title="▶️ Monitoramento Iniciado",
-        description="O bot agora verificará disponibilidade automaticamente.",
-        color=discord.Color.green()
+        title="📊 Status das Notificações",
+        color=discord.Color.blue() if enabled else discord.Color.grey()
     )
     
     embed.add_field(
-        name="Intervalo",
-        value=f"{CHECK_INTERVAL_MINUTES} minutos",
+        name="🔔 Notificações",
+        value="✅ Ativadas" if enabled else "❌ Desativadas",
         inline=True
     )
     
     embed.add_field(
-        name="Serviço",
-        value="PASSAPORTO",
+        name="🕐 Horário",
+        value="20:00 (Itália)",
         inline=True
     )
     
-    embed.add_field(
-        name="📢 Notificações",
-        value="Você receberá uma mensagem quando houver vagas disponíveis!",
-        inline=False
-    )
-    
-    await ctx.send(embed=embed)
-    
-    # Iniciar task de monitoramento
-    if not monitor_loop.is_running():
-        monitor_loop.start(ctx)
-
-
-@bot.command(name="parar", aliases=["stop"])
-async def parar(ctx):
-    """Para o monitoramento automático"""
-    global monitoring_active
-    
-    if not is_authorized(ctx):
-        await ctx.send("❌ Você não está autorizado a usar este bot.")
-        return
-    
-    if not monitoring_active:
-        await ctx.send("⚠️ Monitoramento já está parado!")
-        return
-    
-    monitoring_active = False
-    
-    if monitor_loop.is_running():
-        monitor_loop.cancel()
-    
-    embed = discord.Embed(
-        title="⏸️ Monitoramento Parado",
-        description="O monitoramento automático foi interrompido.",
-        color=discord.Color.orange()
-    )
+    if enabled:
+        embed.add_field(
+            name="⏰ Próxima Notificação",
+            value=next_notification.strftime("%d/%m/%Y às %H:%M"),
+            inline=False
+        )
     
     embed.add_field(
-        name="💡 Dica",
-        value="Use `!iniciar` para retomar o monitoramento.",
+        name="🔗 Link PrenotaMI",
+        value="https://prenotami.esteri.it",
         inline=False
     )
     
     await ctx.send(embed=embed)
 
 
-@tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
-async def monitor_loop(ctx):
-    """Loop de monitoramento automático"""
-    if not monitoring_active:
-        return
+@tasks.loop(minutes=1)
+async def check_time_task():
+    """Verifica se é hora de enviar notificações (20:00 horário da Itália)"""
+    now_italy = datetime.now(ITALY_TZ)
     
-    try:
-        # Criar bot PrenotaMI
-        # Usar headless mode se configurado
-        headless = os.getenv("HEADLESS_MODE", "true").lower() == "true"
-        bot_instance = PrenotaMIBot(PRENOTAMI_EMAIL, PRENOTAMI_PASSWORD, headless=headless)
+    # Verificar se é 20:00
+    if now_italy.hour == 20 and now_italy.minute == 0:
+        await send_notifications()
+
+
+async def send_notifications():
+    """Envia notificações para todos os usuários que ativaram"""
+    for user_id, enabled in notifications_enabled.items():
+        if not enabled:
+            continue
         
-        # Fazer login
-        if not bot_instance.login():
-            await ctx.send("⚠️ Erro ao fazer login durante monitoramento.")
-            bot_instance.close()
-            return
-        
-        # Verificar disponibilidade
-        result = bot_instance.check_availability("PASSAPORTO")
-        
-        if result["available"]:
-            # Notificar usuário
+        try:
+            user = await bot.fetch_user(user_id)
+            
             embed = discord.Embed(
-                title="🎉 VAGA DISPONÍVEL ENCONTRADA!",
-                description=result["message"],
+                title="🔔 Lembrete: Verificar Vagas PrenotaMI!",
+                description=(
+                    "**São 20:00 (horário da Itália)!**\n\n"
+                    "O sistema PrenotaMI acabou de liberar novas vagas para agendamento. "
+                    "Acesse agora para verificar disponibilidade!"
+                ),
                 color=discord.Color.gold()
             )
             
-            if result["dates"]:
-                dates_text = "\n".join([f"📅 {date}" for date in result["dates"][:5]])
-                embed.add_field(
-                    name="Datas disponíveis:",
-                    value=dates_text,
-                    inline=False
-                )
-            
             embed.add_field(
-                name="⚡ Ação Rápida",
-                value="Use `!agendar` AGORA para tentar agendar automaticamente!",
+                name="🔗 Acessar PrenotaMI",
+                value="https://prenotami.esteri.it",
                 inline=False
             )
             
-            embed.set_footer(text=f"Encontrado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+            embed.add_field(
+                name="📝 Passos",
+                value=(
+                    "1. Clique no link acima\n"
+                    "2. Faça login\n"
+                    "3. Selecione o serviço (Passaporte)\n"
+                    "4. Verifique datas disponíveis\n"
+                    "5. Agende se houver vaga!"
+                ),
+                inline=False
+            )
             
-            await ctx.send(embed=embed)
-            await ctx.send("@here")  # Notificação sonora
+            embed.add_field(
+                name="💡 Dica",
+                value="Seja rápido! As vagas acabam em poucos minutos.",
+                inline=False
+            )
+            
+            embed.set_footer(text="Boa sorte! 🍀🇮🇹")
+            
+            await user.send(embed=embed)
+            print(f"[{datetime.now()}] Notificação enviada para usuário {user_id}")
+            
+        except Exception as e:
+            print(f"[{datetime.now()}] Erro ao enviar notificação para {user_id}: {e}")
         
-        bot_instance.close()
-        
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro durante monitoramento: {str(e)}")
+        # Aguardar 1 segundo entre envios para evitar rate limit
+        await asyncio.sleep(1)
 
 
-def main():
-    """Função principal"""
-    if not DISCORD_TOKEN:
-        print("❌ Erro: Configure a variável DISCORD_BOT_TOKEN no arquivo .env")
-        return
-    
-    if not PRENOTAMI_EMAIL or not PRENOTAMI_PASSWORD:
-        print("❌ Erro: Configure PRENOTAMI_EMAIL e PRENOTAMI_PASSWORD no arquivo .env")
-        return
-    
-    try:
-        bot.run(DISCORD_TOKEN)
-    except discord.LoginFailure:
-        print("❌ Erro: Token do Discord inválido")
-    except Exception as e:
-        print(f"❌ Erro ao iniciar bot: {e}")
+@check_time_task.before_loop
+async def before_check_time():
+    """Aguarda o bot estar pronto antes de iniciar o loop"""
+    await bot.wait_until_ready()
 
 
+# Iniciar o bot
 if __name__ == "__main__":
-    main()
+    if not DISCORD_TOKEN:
+        print("ERRO: DISCORD_BOT_TOKEN não configurado!")
+        print("Configure a variável de ambiente DISCORD_BOT_TOKEN")
+        exit(1)
+    
+    bot.run(DISCORD_TOKEN)
